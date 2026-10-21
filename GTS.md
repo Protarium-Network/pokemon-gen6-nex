@@ -7,7 +7,7 @@ Added on top of upstream pokemon-gen6 (commit fc45509):
 - `nex/gts/gts.go` - the eight Global Trade Station methods of the Pokemon Gen 6 DataStore protocol.
 - `nex/register_secure_server_nex_protocols.go`, `init.go` - register them / create the schema.
 
-Written from the protocol definitions in nex-protocols-go; not checked against a console. Known gaps:
+Written from the protocol definitions in nex-protocols-go. A trade has been completed on real consoles (X/Y), and OR/AS connect to the same server. Known gaps:
 - `SearchPokemon` ignores the `Conditions` list (the index layout they refer to is not decoded), so every listing matches.
 - The signature the validator gives is stored but not verified on upload.
 - The meaning of `DeleteFlag`, `Period` and `NeedData` is not interpreted.
