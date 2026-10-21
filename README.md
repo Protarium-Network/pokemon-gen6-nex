@@ -55,3 +55,16 @@ All configuration options are handled via environment variables
 | `PN_POKEGEN6_FRIENDS_GRPC_PORT`          | Port for your friends server gRPC service                                                                               | Yes                                           |
 | `PN_POKEGEN6_FRIENDS_GRPC_API_KEY`       | API key for your friends server gRPC service                                                                            | No (Assumed to be an open gRPC API)              |
 | `PN_POKEGEN6_AES_KEY`                    | AES key for authentication token                                                                                        | Yes                                           |
+
+
+## Protarium fork
+
+This fork of [PretendoNetwork/pokemon-gen6](https://github.com/PretendoNetwork/pokemon-gen6) adds a working Global Trade Station
+(`nex/gts`, `database/gts.go`, see [GTS.md](GTS.md)). It runs both X/Y and OR/AS (the two share one secure server).
+
+- Systemd unit and environment example: `deploy/`.
+- Pair it with a legality validator such as [gen6-validator](https://github.com/Protarium-Network/gen6-validator); the games ask it to
+  sign every Pokemon they send to the GTS, Wonder Trade and battles.
+- Database tests: `PN_POKEGEN6_TEST_POSTGRES_URI=postgres://... go test ./database` (needs a scratch database, it recreates the `gts` schema).
+
+Everything in this repository stays under the GNU AGPL v3 (see `LICENSE`), like upstream.

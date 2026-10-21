@@ -1,0 +1,20 @@
+[Unit]
+Description=Pokemon X/Y/OR/AS (3DS) Gen 6 NEX server
+After=network-online.target postgresql.service pn-account.service pn-friends.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pokemongen6
+Group=pokemongen6
+WorkingDirectory=/opt/pokemon-gen6
+ExecStart=/opt/pokemon-gen6/pokemon-gen6
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/pokemon-gen6
+
+[Install]
+WantedBy=multi-user.target

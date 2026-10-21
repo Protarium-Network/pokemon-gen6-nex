@@ -171,6 +171,7 @@ func init() {
 
 	database.ConnectPostgres()
 	database.InitUtilityDatabase()
+	database.InitGTSDatabase()
 
 	if strings.TrimSpace(healthCheckPort) == "" {
 		globals.Logger.Warning("Basic UDP health check will not be enabled. PN_POKEGEN6_HEALTH_CHECK_PORT environment variable not set")
