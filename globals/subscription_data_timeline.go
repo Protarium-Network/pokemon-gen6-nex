@@ -1,7 +1,7 @@
 package globals
 
 import (
-	"math"
+	"sync"
 	"time"
 
 	"github.com/PretendoNetwork/nex-go/v2"
@@ -9,92 +9,169 @@ import (
 	subscription_types "github.com/PretendoNetwork/nex-protocols-go/v2/subscription/types"
 )
 
-// THIS IS COMPLETELY ARBITARY
-// PLEASE DO NOT ADD IT WHEN CONVERTING TO A DATABASE
+// Upper bound on the players kept in memory. When it is reached the player who has been there longest is dropped.
 const TimelineLength int = 100000
 
+// SubscriptionDataHolder is what one player published about themselves (their presence), and who published it.
 type SubscriptionDataHolder struct {
 	CreationTime time.Time
 	UpdatedTime  time.Time
 	Data         subscription_types.SubscriptionData
+
+	// The games share this server but not their players: X/Y and OR/AS announce different group numbers and
+	// ask for the active players of their own group only.
+	Group uint32
+
+	// The connection that published the data. A console that reconnects publishes again from a new connection while the
+	// old one may still time out, so only the connection that owns the data may remove it.
+	Connection *nex.PRUDPConnection
 }
 
-type SubscriptionDataTimeline map[types.PID]SubscriptionDataHolder
-
-func (tm SubscriptionDataTimeline) ClearData(owner types.PID, targetsTable SubscriptionDataTargets) {
-	delete(tm, owner)
-	delete(targetsTable, owner)
-
-	HandleSubscriptionClearNotification(owner, true)
+// ActivePlayer is one entry of the "players online" list.
+type ActivePlayer struct {
+	PID  types.PID
+	Data subscription_types.SubscriptionData
 }
 
-func (tm SubscriptionDataTimeline) CreateData(owner types.PID, data subscription_types.SubscriptionData, targetsTable SubscriptionDataTargets) *nex.Error {
-	// TODO: should createdata overwrite if existing? assuming no
-	_, exists := tm[owner]
-	if exists {
-		return nex.NewError(nex.ResultCodes.Core.InvalidArgument, "Subscription already exists for this pid")
+// SubscriptionDataTimeline holds the presence of every connected player. Safe for concurrent use: every connection is
+// served from its own goroutine.
+type SubscriptionDataTimeline struct {
+	mu      sync.RWMutex
+	entries map[types.PID]SubscriptionDataHolder
+}
+
+func NewSubscriptionDataTimeline() *SubscriptionDataTimeline {
+	return &SubscriptionDataTimeline{entries: make(map[types.PID]SubscriptionDataHolder)}
+}
+
+// CreateData publishes the presence of a player. A player who is already there (reconnected, or the old entry never
+// timed out) is replaced, and the players watching them are told.
+func (tm *SubscriptionDataTimeline) CreateData(owner types.PID, data subscription_types.SubscriptionData, group uint32, connection *nex.PRUDPConnection, targetsTable *SubscriptionDataTargets) {
+	now := time.Now()
+
+	tm.mu.Lock()
+	if _, exists := tm.entries[owner]; !exists && len(tm.entries) >= TimelineLength {
+		tm.evictOldestLocked()
 	}
-
-	// again, completely arbitrary, do not add when converting to database
-	if len(tm) >= TimelineLength {
-		oldest := int64(math.MaxInt64)
-		oldestKey := types.PID(0)
-		for key, value := range tm {
-			if value.CreationTime.Unix() < oldest {
-				oldest = value.CreationTime.Unix()
-				oldestKey = key
-			}
-		}
-
-		if oldestKey == types.PID(0) {
-			// thats not ok
-			panic("unaccounted for scenario, timeline length is over or equalling 10000 and the oldest key has no assigned owner")
-		}
-
-		delete(tm, oldestKey)
-	}
-
-	tm[owner] = SubscriptionDataHolder{
-		CreationTime: time.Now(),
-		UpdatedTime:  time.Now(),
+	tm.entries[owner] = SubscriptionDataHolder{
+		CreationTime: now,
+		UpdatedTime:  now,
 		Data:         data.Copy().(subscription_types.SubscriptionData),
+		Group:        group,
+		Connection:   connection,
 	}
+	tm.mu.Unlock()
 
 	targetsTable.CreateTargets(owner)
 
 	HandleSubscriptionChangeNotification(owner, true)
-
-	return nil
 }
 
-func (tm SubscriptionDataTimeline) GetData(target types.PID) (*SubscriptionDataHolder, *nex.Error) {
-	data, exists := tm[target]
+func (tm *SubscriptionDataTimeline) evictOldestLocked() {
+	var oldestKey types.PID
+	oldest := time.Now()
+	for key, value := range tm.entries {
+		if value.CreationTime.Before(oldest) {
+			oldest = value.CreationTime
+			oldestKey = key
+		}
+	}
+	delete(tm.entries, oldestKey)
+}
+
+func (tm *SubscriptionDataTimeline) GetData(target types.PID) (*SubscriptionDataHolder, *nex.Error) {
+	tm.mu.RLock()
+	holder, exists := tm.entries[target]
+	tm.mu.RUnlock()
+
 	if !exists {
 		return nil, nex.NewError(nex.ResultCodes.Core.InvalidArgument, "Subscription target does not exist")
 	}
 
-	return &data, nil
+	return &holder, nil
 }
 
-func (tm SubscriptionDataTimeline) HasData(owner types.PID) bool {
-	_, exists := tm[owner]
+func (tm *SubscriptionDataTimeline) HasData(owner types.PID) bool {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+
+	_, exists := tm.entries[owner]
 
 	return exists
 }
 
-func (tm SubscriptionDataTimeline) UpdateData(owner types.PID, data subscription_types.SubscriptionData) *nex.Error {
-	oldData, exists := tm[owner]
+func (tm *SubscriptionDataTimeline) Len() int {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+
+	return len(tm.entries)
+}
+
+func (tm *SubscriptionDataTimeline) UpdateData(owner types.PID, data subscription_types.SubscriptionData) *nex.Error {
+	tm.mu.Lock()
+	holder, exists := tm.entries[owner]
 	if !exists {
+		tm.mu.Unlock()
 		return nex.NewError(nex.ResultCodes.Core.InvalidArgument, "Subscription target does not exist")
 	}
 
-	holder := oldData
 	holder.UpdatedTime = time.Now()
 	holder.Data = data.Copy().(subscription_types.SubscriptionData)
-
-	tm[owner] = holder
+	tm.entries[owner] = holder
+	tm.mu.Unlock()
 
 	HandleSubscriptionChangeNotification(owner, false)
 
 	return nil
+}
+
+// ClearData removes a player because they asked to go offline.
+func (tm *SubscriptionDataTimeline) ClearData(owner types.PID, targetsTable *SubscriptionDataTargets) {
+	tm.mu.Lock()
+	delete(tm.entries, owner)
+	tm.mu.Unlock()
+
+	targetsTable.ClearTargets(owner)
+
+	HandleSubscriptionClearNotification(owner, true)
+}
+
+// ClearDataIfOwned removes a player because a connection ended, but only when that connection is the one that published
+// the data. The end of an old connection must not wipe the presence of the session that replaced it.
+func (tm *SubscriptionDataTimeline) ClearDataIfOwned(owner types.PID, connection *nex.PRUDPConnection, targetsTable *SubscriptionDataTargets) bool {
+	tm.mu.Lock()
+	holder, exists := tm.entries[owner]
+	if !exists || holder.Connection != connection {
+		tm.mu.Unlock()
+		return false
+	}
+	delete(tm.entries, owner)
+	tm.mu.Unlock()
+
+	targetsTable.ClearTargets(owner)
+
+	HandleSubscriptionClearNotification(owner, true)
+
+	return true
+}
+
+// ActivePlayers lists up to limit players of a group, leaving out the player who asks.
+func (tm *SubscriptionDataTimeline) ActivePlayers(group uint32, exclude types.PID, limit int) []ActivePlayer {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+
+	players := make([]ActivePlayer, 0, limit)
+	for pid, holder := range tm.entries {
+		if len(players) >= limit {
+			break
+		}
+
+		if pid == exclude || holder.Group != group {
+			continue
+		}
+
+		players = append(players, ActivePlayer{PID: pid, Data: holder.Data.Copy().(subscription_types.SubscriptionData)})
+	}
+
+	return players
 }

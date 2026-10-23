@@ -22,14 +22,16 @@ func handleSubscriptionNotification(source types.PID, notificationType uint32, n
 	notificationEvent.PIDSource = source
 	notificationEvent.Type = types.UInt32(notificationType)
 
+	if SecureEndpoint == nil {
+		return // not serving yet (unit tests)
+	}
+
 	targets := GetOnlineFriendPIDs(uint32(source))
 
 	if notifyTargets {
-		for targetEntryOwner, targetEntry := range SubscriptionTargets {
-			// if source is targetted by any other user, send the other user a notification
-			if targetEntry.PrincipalIDs.Contains(source) {
-				targets = append(targets, uint64(targetEntryOwner))
-			}
+		// if source is targetted by any other user, send the other user a notification
+		for _, watcher := range SubscriptionTargets.Watchers(source) {
+			targets = append(targets, uint64(watcher))
 		}
 	}
 

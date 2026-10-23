@@ -1,61 +1,97 @@
 package globals
 
 import (
+	"sync"
+
 	"github.com/PretendoNetwork/nex-go/v2/types"
 )
 
-type SubscriptionTargetsHolder struct {
-	PrincipalIDs types.List[types.PID]
+// SubscriptionDataTargets remembers, per player, the players they asked to be kept informed about. Safe for concurrent use.
+type SubscriptionDataTargets struct {
+	mu      sync.RWMutex
+	targets map[types.PID]types.List[types.PID]
 }
 
-type SubscriptionDataTargets map[types.PID]SubscriptionTargetsHolder
-
-func (dt SubscriptionDataTargets) ClearTargets(owner types.PID) {
-	delete(dt, owner)
+func NewSubscriptionDataTargets() *SubscriptionDataTargets {
+	return &SubscriptionDataTargets{targets: make(map[types.PID]types.List[types.PID])}
 }
 
-func (dt SubscriptionDataTargets) CreateTargets(owner types.PID) {
-	// TODO: should create overwrite if existing? assuming no
-	_, exists := dt[owner]
-	if exists {
+func (dt *SubscriptionDataTargets) ClearTargets(owner types.PID) {
+	dt.mu.Lock()
+	defer dt.mu.Unlock()
+
+	delete(dt.targets, owner)
+}
+
+// CreateTargets makes sure the player has a (possibly empty) list.
+func (dt *SubscriptionDataTargets) CreateTargets(owner types.PID) {
+	dt.mu.Lock()
+	defer dt.mu.Unlock()
+
+	if _, exists := dt.targets[owner]; !exists {
+		dt.targets[owner] = types.List[types.PID]{}
+	}
+}
+
+func (dt *SubscriptionDataTargets) DeleteTargets(owner types.PID, targetsToDelete types.List[types.PID]) {
+	dt.mu.Lock()
+	defer dt.mu.Unlock()
+
+	current, exists := dt.targets[owner]
+	if !exists {
 		return
 	}
 
-	targets := SubscriptionTargetsHolder{
-		PrincipalIDs: types.List[types.PID]{},
+	kept := make(types.List[types.PID], 0, len(current))
+	for _, pid := range current {
+		if !targetsToDelete.Contains(pid) {
+			kept = append(kept, pid)
+		}
 	}
 
-	dt[owner] = targets
+	dt.targets[owner] = kept
 }
 
-func (dt SubscriptionDataTargets) DeleteTargets(owner types.PID, targetsToDelete types.List[types.PID]) {
-	// TODO: Implement
-}
+// GetTargets returns a copy, the caller may keep it.
+func (dt *SubscriptionDataTargets) GetTargets(owner types.PID) types.List[types.PID] {
+	dt.mu.RLock()
+	defer dt.mu.RUnlock()
 
-func (dt SubscriptionDataTargets) GetTargets(owner types.PID) types.List[types.PID] {
-	_, exists := dt[owner]
+	current, exists := dt.targets[owner]
 	if !exists {
 		return types.List[types.PID]{}
 	}
 
-	return dt[owner].PrincipalIDs
+	return append(types.List[types.PID]{}, current...)
 }
 
-func (dt SubscriptionDataTargets) HasData(owner types.PID) bool {
-	_, exists := dt[owner]
+func (dt *SubscriptionDataTargets) HasData(owner types.PID) bool {
+	dt.mu.RLock()
+	defer dt.mu.RUnlock()
 
-	if !exists {
-		return false
-	}
-
-	return len(dt[owner].PrincipalIDs) > 0
+	return len(dt.targets[owner]) > 0
 }
 
-func (dt SubscriptionDataTargets) ReplaceTargets(owner types.PID, newTargets types.List[types.PID]) {
-	_, exists := dt[owner]
-	if !exists {
-		return
+// ReplaceTargets stores the new list. It is kept even if the player has no list yet: the list of a player whose old session
+// just ended must not make the call a silent no-op.
+func (dt *SubscriptionDataTargets) ReplaceTargets(owner types.PID, newTargets types.List[types.PID]) {
+	dt.mu.Lock()
+	defer dt.mu.Unlock()
+
+	dt.targets[owner] = append(types.List[types.PID]{}, newTargets...)
+}
+
+// Watchers lists the players who have this player as a target.
+func (dt *SubscriptionDataTargets) Watchers(pid types.PID) []types.PID {
+	dt.mu.RLock()
+	defer dt.mu.RUnlock()
+
+	var watchers []types.PID
+	for owner, list := range dt.targets {
+		if list.Contains(pid) {
+			watchers = append(watchers, owner)
+		}
 	}
 
-	dt[owner] = SubscriptionTargetsHolder{newTargets.Copy().(types.List[types.PID])}
+	return watchers
 }

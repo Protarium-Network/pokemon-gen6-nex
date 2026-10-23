@@ -20,8 +20,11 @@ func CreateMySubscriptionData(err error, packet nex.PacketInterface, callID uint
 
 	globals.Logger.Infof("CreateMySubscriptionData | unk: %d | unk2: %s", unk, unk2.String())
 
+	// unk is the game group: the active player lists are asked for with the same number (X/Y and OR/AS differ)
+	connection, _ := client.(*nex.PRUDPConnection)
+
 	param.PrincipalID = client.PID()
-	globals.SubscriptionTimeline.CreateData(client.PID(), param, globals.SubscriptionTargets)
+	globals.SubscriptionTimeline.CreateData(client.PID(), param, uint32(unk), connection, globals.SubscriptionTargets)
 
 	rmcResponse := nex.NewRMCSuccess(endpoint, nil)
 	rmcResponse.ProtocolID = subscription.ProtocolID

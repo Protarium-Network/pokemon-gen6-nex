@@ -22,8 +22,8 @@ func StartSecureServer() {
 	globals.SecureServer.LibraryVersions.SetDefault(nex.NewLibraryVersion(3, 3, 0))
 	globals.SecureServer.AccessKey = "876138df"
 
-	globals.SubscriptionTimeline = make(globals.SubscriptionDataTimeline)
-	globals.SubscriptionTargets = make(globals.SubscriptionDataTargets)
+	globals.SubscriptionTimeline = globals.NewSubscriptionDataTimeline()
+	globals.SubscriptionTargets = globals.NewSubscriptionDataTargets()
 
 	globals.SecureEndpoint.OnData(func(packet nex.PacketInterface) {
 		request := packet.RMCMessage()
@@ -37,8 +37,8 @@ func StartSecureServer() {
 	})
 
 	globals.SecureEndpoint.OnConnectionEnded(func(connection *nex.PRUDPConnection) {
-		// clear user notification data
-		globals.SubscriptionTimeline.ClearData(connection.PID(), globals.SubscriptionTargets)
+		// Clear the presence of the player, unless it was published by a newer connection of theirs
+		globals.SubscriptionTimeline.ClearDataIfOwned(connection.PID(), connection, globals.SubscriptionTargets)
 	})
 
 	registerCommonSecureServerProtocols()

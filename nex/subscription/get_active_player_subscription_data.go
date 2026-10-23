@@ -30,27 +30,18 @@ func GetActivePlayerSubscriptionData(err error, packet nex.PacketInterface, call
 		count = 100
 	}
 
-	i := 0
-	for targetPID := range globals.SubscriptionTimeline {
-		if i >= int(count) {
-			break
-		}
-
-		target, err := globals.SubscriptionTimeline.GetData(targetPID)
-		if err != nil {
-			return nil, err
-		}
-
+	// Only players of the same game group (unk3 matches what they published at creation), never the player who asks
+	for _, player := range globals.SubscriptionTimeline.ActivePlayers(uint32(unk3), client.PID(), int(count)) {
 		activePlayerSubscription := subscription_types.NewActivePlayerSubscriptionData()
 
 		activePlayerSubscription.Unknown = true
-		activePlayerSubscription.SubscriptionData.PrincipalID = targetPID
-		activePlayerSubscription.SubscriptionData.Unknown = target.Data.Unknown
+		activePlayerSubscription.SubscriptionData.PrincipalID = player.PID
+		activePlayerSubscription.SubscriptionData.Unknown = player.Data.Unknown
 
 		activePlayerSubscriptionList = append(activePlayerSubscriptionList, activePlayerSubscription)
-
-		i++
 	}
+
+	globals.Logger.Infof("GetActivePlayerSubscriptionData | group %d: %d players returned (%d online in total)", unk3, len(activePlayerSubscriptionList), globals.SubscriptionTimeline.Len())
 
 	activePlayerSubscriptionList.WriteTo(rmcResponseStream)
 
