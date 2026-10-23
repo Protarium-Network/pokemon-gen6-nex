@@ -155,23 +155,35 @@ func (tm *SubscriptionDataTimeline) ClearDataIfOwned(owner types.PID, connection
 	return true
 }
 
-// ActivePlayers lists up to limit players of a group, leaving out the player who asks.
-func (tm *SubscriptionDataTimeline) ActivePlayers(group uint32, exclude types.PID, limit int) []ActivePlayer {
+// ActivePlayers lists up to limit online players, leaving out the player who asks. The players of the asked group come first,
+// the others follow to fill the list: the games can play together (trades, battles, Wonder Trade), so a player of another
+// group is still worth showing. It also returns how many of the players are of the asked group.
+func (tm *SubscriptionDataTimeline) ActivePlayers(group uint32, exclude types.PID, limit int) ([]ActivePlayer, int) {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
 
-	players := make([]ActivePlayer, 0, limit)
+	var sameGroup, otherGroups []ActivePlayer
 	for pid, holder := range tm.entries {
-		if len(players) >= limit {
-			break
-		}
-
-		if pid == exclude || holder.Group != group {
+		if pid == exclude {
 			continue
 		}
 
-		players = append(players, ActivePlayer{PID: pid, Data: holder.Data.Copy().(subscription_types.SubscriptionData)})
+		player := ActivePlayer{PID: pid, Data: holder.Data.Copy().(subscription_types.SubscriptionData)}
+		if holder.Group == group {
+			sameGroup = append(sameGroup, player)
+		} else {
+			otherGroups = append(otherGroups, player)
+		}
 	}
 
-	return players
+	if len(sameGroup) > limit {
+		sameGroup = sameGroup[:limit]
+	}
+
+	players := append(sameGroup, otherGroups...)
+	if len(players) > limit {
+		players = players[:limit]
+	}
+
+	return players, len(sameGroup)
 }

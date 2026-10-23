@@ -63,25 +63,34 @@ func TestExplicitClearRemovesWhoeverOwnsIt(t *testing.T) {
 	}
 }
 
-func TestActivePlayersAreOfTheSameGameAndNotSelf(t *testing.T) {
+func TestActivePlayersPreferTheSameGameAndNeverListSelf(t *testing.T) {
 	timeline, targets := newTables()
 	xy1, xy2, oras := types.NewPID(11), types.NewPID(12), types.NewPID(21)
 	timeline.CreateData(xy1, presence(11, "a"), 1, &nex.PRUDPConnection{}, targets)
 	timeline.CreateData(xy2, presence(12, "b"), 1, &nex.PRUDPConnection{}, targets)
 	timeline.CreateData(oras, presence(21, "c"), 2, &nex.PRUDPConnection{}, targets)
 
-	forXY := timeline.ActivePlayers(1, xy1, 100)
-	if len(forXY) != 1 || forXY[0].PID != xy2 {
-		t.Fatalf("an X/Y player should see only the other X/Y player, got %v", forXY)
+	// the games can play together: the other game is listed too, after the players of the same game
+	forXY, same := timeline.ActivePlayers(1, xy1, 100)
+	if len(forXY) != 2 || same != 1 || forXY[0].PID != xy2 || forXY[1].PID != oras {
+		t.Fatalf("X/Y player: want [other X/Y, OR/AS] with 1 of the same group, got %v (%d)", forXY, same)
 	}
 
-	forORAS := timeline.ActivePlayers(2, oras, 100)
-	if len(forORAS) != 0 {
-		t.Fatal("the only OR/AS player sees nobody else")
+	forORAS, same := timeline.ActivePlayers(2, oras, 100)
+	if len(forORAS) != 2 || same != 0 {
+		t.Fatalf("OR/AS player should see both X/Y players, got %v (%d)", forORAS, same)
 	}
 
-	if got := timeline.ActivePlayers(1, types.NewPID(999), 1); len(got) != 1 {
-		t.Fatal("limit not respected")
+	// the limit cuts the others first, the same group keeps its place
+	limited, _ := timeline.ActivePlayers(1, xy1, 1)
+	if len(limited) != 1 || limited[0].PID != xy2 {
+		t.Fatalf("with a limit of 1 the player of the same group must win, got %v", limited)
+	}
+
+	for _, p := range forXY {
+		if p.PID == xy1 {
+			t.Fatal("a player must not see themselves")
+		}
 	}
 }
 
@@ -134,7 +143,7 @@ func TestConcurrentUse(t *testing.T) {
 			for j := 0; j < 200; j++ {
 				timeline.CreateData(pid, presence(uint32(pid), "p"), uint32(1+i%2), connection, targets)
 				targets.ReplaceTargets(pid, types.List[types.PID]{types.NewPID(1000 + uint64(j%10))})
-				_ = timeline.ActivePlayers(1, pid, 100)
+				_, _ = timeline.ActivePlayers(1, pid, 100)
 				_ = targets.Watchers(pid)
 				_ = timeline.HasData(pid)
 				_ = timeline.UpdateData(pid, presence(uint32(pid), "u"))
