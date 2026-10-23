@@ -65,6 +65,24 @@ func (tm *SubscriptionDataTimeline) CreateData(owner types.PID, data subscriptio
 	targetsTable.CreateTargets(owner)
 
 	HandleSubscriptionChangeNotification(owner, true)
+
+	// everybody already online should look at the list of active players again, they may want the newcomer
+	HandleSubscriptionRefreshNotification(tm.PIDsExcept(owner))
+}
+
+// PIDsExcept lists the players present, leaving out one.
+func (tm *SubscriptionDataTimeline) PIDsExcept(exclude types.PID) []types.PID {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+
+	pids := make([]types.PID, 0, len(tm.entries))
+	for pid := range tm.entries {
+		if pid != exclude {
+			pids = append(pids, pid)
+		}
+	}
+
+	return pids
 }
 
 func (tm *SubscriptionDataTimeline) evictOldestLocked() {

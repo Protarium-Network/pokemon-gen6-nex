@@ -154,3 +154,20 @@ func TestConcurrentUse(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestPIDsExceptLeavesOutTheNewcomer(t *testing.T) {
+	timeline, targets := newTables()
+	for _, pid := range []uint64{1, 2, 3} {
+		timeline.CreateData(types.NewPID(pid), presence(uint32(pid), "x"), 1, &nex.PRUDPConnection{}, targets)
+	}
+
+	others := timeline.PIDsExcept(types.NewPID(2))
+	if len(others) != 2 {
+		t.Fatalf("want the 2 other players, got %v", others)
+	}
+	for _, pid := range others {
+		if pid == types.NewPID(2) {
+			t.Fatal("the newcomer must not be told about themselves")
+		}
+	}
+}
